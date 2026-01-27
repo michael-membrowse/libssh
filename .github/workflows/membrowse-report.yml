@@ -42,7 +42,11 @@ jobs:
       - name: Setup and build
         shell: bash
         run: |
-          ${{ matrix.setup_cmd }}
+          for i in 1 2 3; do
+            ${{ matrix.setup_cmd }} && break
+            echo "Setup attempt $i failed, retrying..."
+            sleep 5
+          done
           ${{ matrix.build_cmd }}
 
       - name: Upload ELF artifact
@@ -62,6 +66,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Download ELF artifact
         uses: actions/download-artifact@v4
