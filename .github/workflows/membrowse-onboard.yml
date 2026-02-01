@@ -25,7 +25,6 @@ jobs:
   onboard:
     needs: load-targets
     runs-on: ubuntu-22.04
-    container: espressif/idf:release-v5.5
     strategy:
       fail-fast: false
       matrix:
@@ -38,15 +37,29 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Download libssh source
-        shell: bash
+      - name: Install ESP-IDF dependencies
         run: |
-          . ${IDF_PATH}/export.sh
+          sudo apt-get update
+          sudo apt-get install -y git wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0
+
+      - name: Setup ESP-IDF
+        run: |
+          git clone -b release/v5.5 --depth 1 --recursive https://github.com/espressif/esp-idf.git /home/runner/esp-idf
+          /home/runner/esp-idf/install.sh esp32
+          echo "IDF_PATH=/home/runner/esp-idf" >> $GITHUB_ENV
+          # Find and record venv path for use in build script
+          VENV_PATH=$(find /home/runner/.espressif/python_env -name "activate" -path "*/bin/*" 2>/dev/null | head -1 | xargs dirname)
+          echo "IDF_PYTHON_ENV=$VENV_PATH" >> $GITHUB_ENV
+          echo "Found venv at: $VENV_PATH"
+
+      - name: Download libssh source
+        run: |
+          . /home/runner/esp-idf/export.sh
           cd libssh && ./install.sh
           # Store libssh source outside repo to survive git checkouts
           LIBSSH_DIR=$(ls -d libssh-* | head -1)
-          mv "$LIBSSH_DIR" /tmp/libssh-source
-          echo "LIBSSH_SOURCE=/tmp/libssh-source" >> $GITHUB_ENV
+          mv "$LIBSSH_DIR" /home/runner/libssh-source
+          echo "LIBSSH_SOURCE=/home/runner/libssh-source" >> $GITHUB_ENV
           echo "Downloaded libssh: $LIBSSH_DIR"
 
       - name: Create build script
@@ -54,7 +67,10 @@ jobs:
           cat > /tmp/build.sh << 'EOF'
           #!/bin/bash
           set -e
-          . ${IDF_PATH}/export.sh
+          # Activate venv first, then source export.sh
+          . "$IDF_PYTHON_ENV/activate"
+          export IDF_PATH=/home/runner/esp-idf
+          . "$IDF_PATH/export.sh" 2>/dev/null || true
           if [ ! -d "libssh/examples/$1" ]; then
             echo "Example $1 not found in this commit, skipping"
             exit 0
@@ -69,20 +85,10 @@ jobs:
           EOF
           chmod +x /tmp/build.sh
 
-      - name: Setup Python path for action compatibility
-        run: |
-          # actions/setup-python expects Python at /__t/Python/*/x64/bin/
-          # Create symlink structure pointing to container's Python
-          PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
-          mkdir -p "/__t/Python/${PYTHON_VERSION}/x64/bin"
-          ln -sf /usr/bin/python3 "/__t/Python/${PYTHON_VERSION}/x64/bin/python"
-          ln -sf /usr/bin/python3 "/__t/Python/${PYTHON_VERSION}/x64/bin/python3"
-          ln -sf /usr/bin/pip3 "/__t/Python/${PYTHON_VERSION}/x64/bin/pip"
-          ln -sf /usr/bin/pip3 "/__t/Python/${PYTHON_VERSION}/x64/bin/pip3"
-
       - name: Run Membrowse Onboard Action
         env:
           LIBSSH_SOURCE: ${{ env.LIBSSH_SOURCE }}
+          IDF_PYTHON_ENV: ${{ env.IDF_PYTHON_ENV }}
         uses: membrowse/membrowse-action/onboard-action@v1
         with:
           target_name: ${{ matrix.target_name }}
