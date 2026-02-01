@@ -69,6 +69,17 @@ jobs:
           EOF
           chmod +x /tmp/build.sh
 
+      - name: Setup Python path for action compatibility
+        run: |
+          # actions/setup-python expects Python at /__t/Python/*/x64/bin/
+          # Create symlink structure pointing to container's Python
+          PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
+          mkdir -p "/__t/Python/${PYTHON_VERSION}/x64/bin"
+          ln -sf /usr/bin/python3 "/__t/Python/${PYTHON_VERSION}/x64/bin/python"
+          ln -sf /usr/bin/python3 "/__t/Python/${PYTHON_VERSION}/x64/bin/python3"
+          ln -sf /usr/bin/pip3 "/__t/Python/${PYTHON_VERSION}/x64/bin/pip"
+          ln -sf /usr/bin/pip3 "/__t/Python/${PYTHON_VERSION}/x64/bin/pip3"
+
       - name: Run Membrowse Onboard Action
         env:
           LIBSSH_SOURCE: ${{ env.LIBSSH_SOURCE }}
