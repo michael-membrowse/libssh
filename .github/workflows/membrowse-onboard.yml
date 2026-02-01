@@ -25,6 +25,7 @@ jobs:
   onboard:
     needs: load-targets
     runs-on: ubuntu-22.04
+    container: espressif/idf:release-v5.5
     strategy:
       fail-fast: false
       matrix:
@@ -37,46 +38,32 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Install ESP-IDF dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y git wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0
-
-      - name: Clone and install ESP-IDF
-        run: |
-          git clone -b release/v5.5 --depth 1 --recursive https://github.com/espressif/esp-idf.git /home/runner/esp-idf
-          /home/runner/esp-idf/install.sh esp32
-          # Find and record the actual venv path
-          VENV_PATH=$(find /home/runner/.espressif/python_env -name "activate" -path "*/bin/*" 2>/dev/null | head -1 | xargs dirname)
-          echo "ESP_IDF_VENV=$VENV_PATH" >> $GITHUB_ENV
-          echo "Found venv at: $VENV_PATH"
-
-      - name: Set ESP-IDF environment globally
-        run: |
-          . /home/runner/esp-idf/export.sh
-          echo "$PATH" | tr ':' '\n' | grep -E "(espressif|esp-idf)" >> $GITHUB_PATH
-          echo "IDF_PATH=/home/runner/esp-idf" >> $GITHUB_ENV
-          which idf.py
-
       - name: Download libssh source
+        shell: bash
         run: |
+          . ${IDF_PATH}/export.sh
           cd libssh && ./install.sh
-          mv libssh-0.11.0 /home/runner/libssh-0.11.0
+          # Store libssh source outside repo to survive git checkouts
+          LIBSSH_DIR=$(ls -d libssh-* | head -1)
+          mv "$LIBSSH_DIR" /tmp/libssh-source
+          echo "LIBSSH_SOURCE=/tmp/libssh-source" >> $GITHUB_ENV
+          echo "Downloaded libssh: $LIBSSH_DIR"
 
       - name: Create build script
         run: |
           cat > /tmp/build.sh << 'EOF'
           #!/bin/bash
           set -e
-          . $ESP_IDF_VENV/activate
-          export IDF_PATH=/home/runner/esp-idf
-          . $IDF_PATH/export.sh 2>/dev/null || true
+          . ${IDF_PATH}/export.sh
           if [ ! -d "libssh/examples/$1" ]; then
             echo "Example $1 not found in this commit, skipping"
             exit 0
           fi
-          # Symlink libssh source (stored outside repo to survive git checkouts)
-          ln -sfn /home/runner/libssh-0.11.0 libssh/libssh-0.11.0
+          # Detect expected libssh version from CMakeLists.txt
+          EXPECTED_VERSION=$(grep 'set(LIBSSH_VERSION' libssh/CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/')
+          EXPECTED_DIR="libssh-${EXPECTED_VERSION}"
+          # Create symlink with expected name pointing to downloaded source
+          ln -sfn "$LIBSSH_SOURCE" "libssh/${EXPECTED_DIR}"
           cd libssh/examples/$1
           idf.py build
           EOF
@@ -84,7 +71,7 @@ jobs:
 
       - name: Run Membrowse Onboard Action
         env:
-          ESP_IDF_VENV: ${{ env.ESP_IDF_VENV }}
+          LIBSSH_SOURCE: ${{ env.LIBSSH_SOURCE }}
         uses: membrowse/membrowse-action/onboard-action@v1
         with:
           target_name: ${{ matrix.target_name }}
